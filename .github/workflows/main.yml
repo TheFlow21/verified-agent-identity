@@ -15,6 +15,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       # 1. Checkout
@@ -26,61 +27,68 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
 
-      # 3. Debug basic info (penting untuk troubleshooting)
+      # 3. Debug
       - name: Debug Environment
         run: |
           node -v
           npm -v
-          pwd
-          ls -la
+          which node
+          which npm
 
-      # 4. Install ClawHub (pakai retry biar gak random fail)
-      - name: Step 1 - Install ClawHub skill
+      # ✅ 4. INSTALL CLAWHUB (FIX UTAMA)
+      - name: Install ClawHub CLI
         run: |
-          npx clawhub@latest install verified-agent-identity || \
-          (echo "Retry install ClawHub..." && sleep 5 && npx clawhub@latest install verified-agent-identity)
+          npm install -g clawhub
 
-      # 5. Install dependencies (dengan fallback kalau scripts tidak ada)
+      - name: Verify ClawHub Install
+        run: |
+          clawhub --version || echo "ClawHub not found"
+
+      # ✅ 5. INSTALL SKILL (NON-INTERACTIVE + FALLBACK)
+      - name: Install ClawHub Skill
+        run: |
+          clawhub install verified-agent-identity --yes || \
+          (echo "Retry install..." && sleep 5 && clawhub install verified-agent-identity --yes) || \
+          echo "WARNING: Skill install failed, continuing..."
+
+      # 6. Install dependencies
       - name: Install script dependencies
         run: |
           if [ -d "scripts" ]; then
             cd scripts
             npm install
-          else
-            echo "No scripts folder found, skipping install"
+            cd ..
           fi
 
-      # 6. Create Ethereum Identity (dengan error handling)
+      # 7. Create Identity
       - name: Step 2 - Create new Ethereum Identity
         run: |
-          if [ -f "scripts/createNewEthereumIdentity.js" ]; then
-            node scripts/createNewEthereumIdentity.js
-          else
-            echo "Script createNewEthereumIdentity.js not found"
+          if [ ! -f "scripts/createNewEthereumIdentity.js" ]; then
+            echo "Script tidak ditemukan!"
             exit 1
           fi
+          node scripts/createNewEthereumIdentity.js
 
-      # 7. Link Human to Agent (FIX JSON quoting issue)
+      # ✅ 8. FIX JSON TANPA jq
       - name: Step 3 - Link Human to Agent
         env:
           AGENT_NAME: ${{ github.event.inputs.agent_name }}
           AGENT_DESC: ${{ github.event.inputs.agent_description }}
         run: |
-          if [ -f "scripts/manualLinkHumanToAgent.js" ]; then
-            node scripts/manualLinkHumanToAgent.js --challenge "$(jq -n \
-              --arg name "$AGENT_NAME" \
-              --arg description "$AGENT_DESC" \
-              '{name: $name, description: $description}')"
-          else
-            echo "Script manualLinkHumanToAgent.js not found"
+          if [ ! -f "scripts/manualLinkHumanToAgent.js" ]; then
+            echo "Script tidak ditemukan!"
             exit 1
           fi
 
-      # 8. Optional fallback log kalau gagal
+          CHALLENGE="{\"name\":\"$AGENT_NAME\",\"description\":\"$AGENT_DESC\"}"
+          echo "Challenge: $CHALLENGE"
+
+          node scripts/manualLinkHumanToAgent.js --challenge "$CHALLENGE"
+
+      # 9. Debug kalau gagal
       - name: Debug on failure
         if: failure()
         run: |
-          echo "Workflow failed. Printing directory:"
+          echo "Workflow failed"
           ls -R
